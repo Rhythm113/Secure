@@ -299,7 +299,7 @@ function rev_detect() {
         ps_output=$(ps -u "$REV_DETECT_USER" -o user,pid,cmd --no-headers)
     fi
 
-    local patterns="(^|[^a-zA-Z0-9_-])(nc|bash -i|sh -i|perl .*socket|python.*socket|socat|0<&[0-9]+;exec [0-9]+<>/dev/tcp)([^a-zA-Z0-9_-]|$)"
+    local patterns="(^|[^a-zA-Z0-9_-])(nc|bash -i|sh -i|perl .*socket|python.*socket|python -c|socat|0<&[0-9]+;exec [0-9]+<>/dev/tcp)([^a-zA-Z0-9_-]|$)"
     
     echo "$ps_output" | grep -E "$patterns" | grep -v "grep -E" | while read -r line; do
         local user=$(echo "$line" | awk '{print $1}')
