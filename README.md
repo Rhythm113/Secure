@@ -5,7 +5,7 @@ A simple yet effective IDS to monitor your system.
 
 # Installation
  - Clone the repo to your server.
- - Run `sudo setup.sh`
+ - Run `sudo ./setup.sh`
  - Follow the setup process and enjoy !
 
 # Setting up the Alert system
