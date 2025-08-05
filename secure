@@ -1,0 +1,225 @@
+#!/bin/bash
+
+# ==============================================================================
+# Project secure 1.0
+# Wrapper script for managing the IDS core script.
+# Provides a command-line interface to configure, start, and stop the IDS.
+# ==============================================================================
+
+# system
+IDS_CORE_SCRIPT="/usr/local/bin/ids_core.sh"
+CONFIG_FILE="/etc/secure_ids/ids.conf"
+CONFIG_DIR="/etc/secure_ids"
+
+
+configure() {
+    echo "--- Interactive Configuration ---"
+    echo "Press Enter to accept the default value shown in brackets."
+    echo ""
+
+    local temp_conf=$(mktemp)
+
+    # Confirm overwrite if config exists
+    if [[ -f "$CONFIG_FILE" ]]; then
+        read -p "Configuration already exists. Overwrite? (y/N): " confirm
+        if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+            echo "Aborting configuration."
+            rm "$temp_conf"
+            return
+        fi
+    fi
+    
+    # NO FKIN PIPE
+    readarray -t conf_lines <<'EOF'
+# IDS Configuration
+# Log files and directories. Must be absolute paths.
+# Description: Main log for security events.
+LOGFILE=/var/tmp/Secure/secure.log
+# Description: Working directory for temporary files.
+WORKDIR=/var/tmp/Secure/Secure
+# Description: Log for file integrity changes.
+LOGFILE_MODIFY=/var/tmp/Secure/patch.log
+# Description: List of trusted IP addresses.
+KNOWN_IPS=/var/tmp/Secure/known_ips.txt
+# Description: Main log for security alerts.
+ALERT_LOG=/var/tmp/Secure/ids_alerts.log
+# Description: List of phone numbers for SMS alerts.
+ALERT_USERS_LIST=/var/tmp/Secure/numbers.txt
+# Description: List of directories for file integrity monitoring.
+WATCH_DIR_LIST=/var/tmp/Secure/watch_dir.txt
+# Description: List of files/directories to ignore during monitoring.
+WATCH_DIR_EXCEPTIONS=/var/tmp/Secure/watch_dir_ex.txt
+# Description: List of users for SMS or Email alerts.
+ALERT_USERS_LIST=/var/tmp/Secure/users_sms.txt
+
+# Main Configuration Switches
+# Description: Enable alerts via SMS or Email. (true/false)
+ALERT_ENABLED=true
+# Description: Alert method. (SMS/EMAIL)
+ALERT_MODE=SMS
+# Description: Enable File Integrity Monitoring. (true/false)
+ENABLE_WATCHDIR=false
+# Description: Immediately terminate detected reverse shells. (true/false)
+KILL_REVERSE_SHELL=false
+
+# API Configuration (For alerts)
+# Description: Endpoint for the alert API.
+API_URL=
+# Description: Username for the alert API.
+API_USERNAME=
+# Description: Password for the alert API.
+API_PASSWORD=
+
+# Reverse Shell Detection Configuration
+# Description: User to monitor for reverse shells. ("ALL" or specific username).
+REV_DETECT_USER=ALL
+EOF
+
+    local description=""
+
+    for line in "${conf_lines[@]}"; do
+        if [[ "$line" =~ ^#\ Description:\  ]]; then
+            description="${line#*Description: }"
+            continue
+        elif [[ "$line" =~ ^[[:space:]]*#.*$ || -z "$line" ]]; then
+            echo "$line" >> "$temp_conf"
+            continue
+        fi
+
+        local key=$(echo "$line" | cut -d'=' -f1)
+        local default_value=$(echo "$line" | cut -d'=' -f2-)
+
+        echo "$description"
+        read -p "Enter value for $key [$default_value]: " new_value
+
+        if [[ -z "$new_value" ]]; then
+            echo "$key=$default_value" >> "$temp_conf"
+        else
+            echo "$key=$new_value" >> "$temp_conf"
+        fi
+
+        echo ""
+    done
+
+    mv "$temp_conf" "$CONFIG_FILE"
+    chmod 600 "$CONFIG_FILE"
+    echo "Configuration updated and saved to $CONFIG_FILE."
+}
+
+
+# cron
+start() {
+
+    if [[ $(id -u) -ne 0 ]]; then
+        echo "Error: This command requires root privileges." >&2
+        exit 1
+    fi
+
+
+    if [[ -z "$1" ]]; then
+        echo "Error: Please specify a delay in seconds." >&2
+        echo "Usage: secure --start <delay_in_seconds>" >&2
+        exit 1
+    fi
+    local delay="$1"
+    
+    
+    mkdir -p "$CONFIG_DIR"
+    
+
+    cp ./ids_core.sh "$IDS_CORE_SCRIPT"
+    chmod 755 "$IDS_CORE_SCRIPT"
+
+    local cron_command="$IDS_CORE_SCRIPT"
+    local cron_entry=""
+    
+    # Create a cron job based on the delay
+    # A delay in seconds is tricky for cron. We will use a more efficient
+    # approach by running the script every minute with a calculated
+    # starting point.
+    local minute_interval=$(( delay / 60 ))
+    if (( minute_interval < 1 )); then
+        echo "Minimum interval is set to 1 min"
+        minute_interval=1
+    fi
+    
+    cron_entry="*/$minute_interval * * * * $cron_command"
+    
+    # crontab
+    (crontab -l 2>/dev/null | grep -v -F "$cron_command"; echo "$cron_entry") | crontab -
+    
+    echo "IDS started. A cron job has been created to run the script every $minute_interval minute(s)."
+    echo "To stop the IDS, run: secure --stop"
+}
+
+# remove cron
+stop() {
+
+    if [[ $(id -u) -ne 0 ]]; then
+        echo "Error: This command requires root privileges." >&2
+        exit 1
+    fi
+    
+    (crontab -l 2>/dev/null | grep -v -F "$IDS_CORE_SCRIPT") | crontab -
+    echo "IDS stopped. The cron job has been removed."
+}
+
+# uninstall script
+
+rmv(){
+
+    read -p "Are you sure you want to remove Secure IDS from your device ? (y/N): " confirm
+        if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+            echo "Good choice !"
+            return
+        fi
+    echo "Removing cron jobs..."
+    stop
+    echo "Removing all work and config files.."
+    if [[ -d "$CONFIG_DIR" ]]; then
+        rm -rf "$CONFIG_DIR"
+    fi
+
+    if [[ -f "$CONFIG_FILE" ]]; then
+        rm -f "$CONFIG_FILE"
+    fi
+
+    if [[ -f "$IDS_CORE_SCRIPT" ]]; then
+        rm -f "$IDS_CORE_SCRIPT"
+    fi
+
+    echo "All done...."
+    echo "====================="
+
+    # Bye Bye :(
+    SCRIPT_PATH="$(realpath "$0")"
+    rm -f "$SCRIPT_PATH"
+
+
+}
+
+# --- Main script execution ---
+case "$1" in
+    --configure)
+        configure
+        ;;
+    --remove)
+        rmv
+        ;;
+    --start)
+        shift
+        start "$1"
+        ;;
+    --stop)
+        stop
+        ;;
+    *)
+        echo "========================================"
+        echo "       Project Secure IDS 1.0           "
+        echo "         By @Rhythm113                  " 
+        echo "========================================"
+        echo ""
+        echo "Usage: secure [--configure | --start <delay_in_seconds> | --stop | --remove]"
+        exit 1
+        ;;
+esac
